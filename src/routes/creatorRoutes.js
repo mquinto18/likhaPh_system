@@ -89,10 +89,91 @@ router.get("/public", async (req, res) => {
   res.json(data);
 });
 
+// Public: get a single creator by username (no auth required)
+router.get("/public/:username", async (req, res) => {
+  const { username } = req.params;
+  const { data, error } = await supabase
+    .from("creators")
+    .select("*")
+    .eq("username", username)
+    .eq("onboarding_complete", true)
+    .single();
+  if (error || !data)
+    return res.status(404).json({ message: "Creator not found" });
+  res.json(data);
+});
+
 router.get("/", authMiddleware, async (req, res) => {
   const { data, error } = await supabase.from("creators").select("*");
   if (error) return res.status(400).json(error);
   res.json(data);
+});
+
+// Toggle like on a creator (like if not liked, unlike if already liked)
+router.post("/:creatorId/like", authMiddleware, async (req, res) => {
+  const user = req.user;
+  const { creatorId } = req.params;
+  if (!user || !user.id) {
+    return res.status(400).json({ message: "User info missing" });
+  }
+  // Check if already liked
+  const { data: existing } = await supabase
+    .from("creator_likes")
+    .select("id")
+    .eq("creator_id", creatorId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (existing) {
+    // Unlike
+    await supabase
+      .from("creator_likes")
+      .delete()
+      .eq("creator_id", creatorId)
+      .eq("user_id", user.id);
+  } else {
+    // Like
+    const { error } = await supabase
+      .from("creator_likes")
+      .insert([{ creator_id: creatorId, user_id: user.id }]);
+    if (error) return res.status(400).json({ message: error.message });
+  }
+
+  // Return updated count and liked status
+  const { count } = await supabase
+    .from("creator_likes")
+    .select("*", { count: "exact", head: true })
+    .eq("creator_id", creatorId);
+  res.json({ liked: !existing, likes_count: count || 0 });
+});
+
+// Get likes count and whether current user liked (public count, auth for liked status)
+router.get("/:creatorId/likes", async (req, res) => {
+  const { creatorId } = req.params;
+  const { count } = await supabase
+    .from("creator_likes")
+    .select("*", { count: "exact", head: true })
+    .eq("creator_id", creatorId);
+
+  // Check auth header for liked status
+  const authHeader = req.headers.authorization;
+  let liked = false;
+  if (authHeader) {
+    const token = authHeader.replace("Bearer ", "");
+    const {
+      data: { user },
+    } = await supabase.auth.getUser(token);
+    if (user) {
+      const { data: existing } = await supabase
+        .from("creator_likes")
+        .select("id")
+        .eq("creator_id", creatorId)
+        .eq("user_id", user.id)
+        .single();
+      liked = !!existing;
+    }
+  }
+  res.json({ likes_count: count || 0, liked });
 });
 
 export default router;
