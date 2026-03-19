@@ -2,9 +2,93 @@
 
 import express from "express";
 import supabase from "../config/supabase.js";
+import nodemailer from "nodemailer";
 import { authMiddleware } from "../middleware/auth.js";
 
 const router = express.Router();
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+router.post("/:creatorId/message", authMiddleware, async (req, res) => {
+  const { creatorId } = req.params;
+  const { message } = req.body;
+  const senderUserId = req.user.id;
+
+  if (!message || !message.trim()) {
+    return res.status(400).json({ message: "Message is required" });
+  }
+  // Get the creator's email from auth.users via their user_id
+  const { data: creator, error: creatorError } = await supabase
+    .from("creators")
+    .select("name, username, user_id")
+    .eq("user_id", creatorId)
+    .single();
+
+  if (creatorError || !creator) {
+    return res.status(404).json({ message: "Creator not found" });
+  }
+
+  // Get creator's email from Supabase Auth
+  const { data: creatorAuth, error: authError } =
+    await supabase.auth.admin.getUserById(creator.user_id);
+
+  if (authError || !creatorAuth?.user?.email) {
+    return res.status(400).json({ message: "Could not find creator email" });
+  }
+
+  // Get sender info
+  const { data: sender } = await supabase
+    .from("creators")
+    .select("name, username")
+    .eq("user_id", senderUserId)
+    .single();
+
+  const senderName = sender?.name || "A LikhaHub user";
+  const senderUsername = sender?.username || "";
+
+  // Get sender's email from Supabase Auth
+  const { data: senderAuth } =
+    await supabase.auth.admin.getUserById(senderUserId);
+  const senderEmail = senderAuth?.user?.email || "";
+  const senderProfileLink = senderUsername
+    ? `${req.protocol}://${req.get("host").replace(":3001", ":8080")}/creator/${senderUsername}`
+    : "";
+
+  // Send email
+  const mailOptions = {
+    from: `"LikhaHub" <${process.env.EMAIL_USER}>`,
+    to: creatorAuth.user.email,
+    subject: `New Collaboration Request from ${senderName}`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
+        <h2>Hey ${creator.name}! 👋</h2>
+        <p><strong>${senderName}</strong> (${senderUsername}) wants to collaborate with you!</p>
+        <div style="background: #f4f4f5; border-radius: 12px; padding: 16px; margin: 16px 0;">
+          <p style="margin: 0; white-space: pre-wrap;">${message}</p>
+        </div>
+        ${senderEmail ? `<p style="font-size: 14px; margin: 12px 0;"><strong>Email:</strong> <a href="mailto:${senderEmail}" style="color: #6d28d9;">${senderEmail}</a></p>` : ""}
+        ${senderProfileLink ? `<p style="font-size: 14px; margin: 12px 0;"><strong>Profile:</strong> <a href="${senderProfileLink}" style="color: #6d28d9;">View ${senderName}'s Profile</a></p>` : ""}
+        <p style="color: #666; font-size: 14px;">Reply to this email or connect on LikhaHub.</p>
+        <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 24px 0;" />
+        <p style="color: #999; font-size: 12px;">© 2026 LikhaHub</p>
+      </div>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    res.json({ message: "Message sent successfully" });
+  } catch (err) {
+    console.error("Email send error:", err);
+    res.status(500).json({ message: "Failed to send message" });
+  }
+});
 
 router.get("/me", authMiddleware, async (req, res) => {
   const user = req.user;
