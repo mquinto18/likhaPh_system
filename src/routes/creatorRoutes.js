@@ -123,6 +123,7 @@ router.put("/", authMiddleware, async (req, res) => {
   const updateFields = {
     ...req.body,
     onboarding_complete: true,
+    account_status: "pending",
     updated_at: new Date().toISOString(),
   };
   const { error } = await supabase
@@ -155,6 +156,7 @@ router.post("/", authMiddleware, async (req, res) => {
       user_id: user.id,
       name: "",
       username: user.email,
+      account_status: "pending",
     },
   ]);
   if (error) {
@@ -163,12 +165,13 @@ router.post("/", authMiddleware, async (req, res) => {
   res.status(201).json({ message: "Creator created" });
 });
 
-// Public: get all onboarded creators (no auth required)
+// Public: get all onboarded and approved creators (no auth required)
 router.get("/public", async (req, res) => {
   const { data, error } = await supabase
     .from("creators")
     .select("*")
-    .eq("onboarding_complete", true);
+    .eq("onboarding_complete", true)
+    .eq("account_status", "approved");
   if (error) return res.status(400).json({ message: error.message });
   res.json(data);
 });
@@ -181,6 +184,7 @@ router.get("/public/:username", async (req, res) => {
     .select("*")
     .eq("username", username)
     .eq("onboarding_complete", true)
+    .eq("account_status", "approved")
     .single();
   if (error || !data)
     return res.status(404).json({ message: "Creator not found" });
@@ -258,6 +262,35 @@ router.get("/:creatorId/likes", async (req, res) => {
     }
   }
   res.json({ likes_count: count || 0, liked });
+});
+
+// Admin: update a creator's account status (approve/reject)
+router.patch("/:creatorId/status", authMiddleware, async (req, res) => {
+  const { creatorId } = req.params;
+  const { account_status } = req.body;
+
+  if (!["approved", "rejected", "pending"].includes(account_status)) {
+    return res.status(400).json({ message: "Invalid status. Use: approved, rejected, or pending" });
+  }
+
+  const { error } = await supabase
+    .from("creators")
+    .update({ account_status, updated_at: new Date().toISOString() })
+    .eq("user_id", creatorId);
+
+  if (error) return res.status(400).json({ message: error.message });
+  res.json({ message: `Creator status updated to ${account_status}` });
+});
+
+// Admin: get all pending creators
+router.get("/admin/pending", authMiddleware, async (req, res) => {
+  const { data, error } = await supabase
+    .from("creators")
+    .select("*")
+    .eq("onboarding_complete", true)
+    .eq("account_status", "pending");
+  if (error) return res.status(400).json({ message: error.message });
+  res.json(data);
 });
 
 export default router;
