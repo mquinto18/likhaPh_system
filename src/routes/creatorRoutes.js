@@ -120,12 +120,24 @@ router.put("/", authMiddleware, async (req, res) => {
       return res.status(409).json({ message: "Username is already taken" });
     }
   }
+  // Get current creator to check existing status
+  const { data: current } = await supabase
+    .from("creators")
+    .select("account_status, onboarding_complete")
+    .eq("user_id", user.id)
+    .single();
+
   const updateFields = {
     ...req.body,
     onboarding_complete: true,
-    account_status: "pending",
     updated_at: new Date().toISOString(),
   };
+
+  // Only set account_status to pending on first onboarding
+  // Don't override if already approved or rejected
+  if (!current?.onboarding_complete) {
+    updateFields.account_status = "pending";
+  }
   const { error } = await supabase
     .from("creators")
     .update(updateFields)
@@ -151,12 +163,14 @@ router.post("/", authMiddleware, async (req, res) => {
     return res.status(200).json({ message: "Creator already exists" });
   }
   // Insert new creator
+  const { role } = req.body;
   const { error } = await supabase.from("creators").insert([
     {
       user_id: user.id,
       name: "",
       username: user.email,
       account_status: "pending",
+      role: role || "creator",
     },
   ]);
   if (error) {

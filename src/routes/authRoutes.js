@@ -4,7 +4,7 @@ import supabase from "../config/supabase.js";
 const router = express.Router();
 
 router.post("/login", async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, role } = req.body;
   if (!email || !password) {
     return res.status(400).json({ message: "Email and password are required" });
   }
@@ -21,25 +21,32 @@ router.post("/login", async (req, res) => {
   if (!user || !user.id) {
     return res.status(401).json({ message: "Invalid credentials" });
   }
-  // 2. Get onboarding status from creators table
+  // 2. Get onboarding status and role from creators table
   const { data: creator, error: creatorError } = await supabase
     .from("creators")
-    .select("onboarding_complete")
+    .select("onboarding_complete, role")
     .eq("user_id", user.id)
     .single();
   if (creatorError) {
     return res.status(400).json({ message: creatorError.message });
+  }
+  // 3. Validate role if provided
+  if (role && creator?.role && creator.role !== role) {
+    return res.status(403).json({
+      message: `This account is registered as a ${creator.role}. Please select "${creator.role.charAt(0).toUpperCase() + creator.role.slice(1)}" to sign in.`,
+    });
   }
   res.status(200).json({
     user,
     access_token: session?.access_token || null,
     refresh_token: session?.refresh_token || null,
     onboarding_complete: creator?.onboarding_complete || false,
+    role: creator?.role || "creator",
   });
 });
 // Sign up endpoint
 router.post("/signup", async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, role } = req.body;
   if (!email || !password) {
     return res.status(400).json({ message: "Email and password are required" });
   }
@@ -59,6 +66,7 @@ router.post("/signup", async (req, res) => {
       user_id: user.id,
       name: "",
       username: email,
+      role: role || "creator",
     },
   ]);
   if (creatorError) {
