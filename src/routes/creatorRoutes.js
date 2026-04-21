@@ -1,5 +1,3 @@
-// Get the current user's creator profile
-
 import express from "express";
 import supabase from "../config/supabase.js";
 import nodemailer from "nodemailer";
@@ -7,12 +5,56 @@ import { authMiddleware } from "../middleware/auth.js";
 
 const router = express.Router();
 
+function calculateProfileCompletion(creator) {
+  const checks = [
+    !!(creator.name && String(creator.name).trim() !== ""),
+    !!(creator.username && String(creator.username).trim() !== ""),
+    !!(creator.avatar_url && String(creator.avatar_url).trim() !== ""),
+    !!(creator.bio && String(creator.bio).trim() !== ""),
+    !!(creator.niche && (Array.isArray(creator.niche) ? creator.niche.length > 0 : String(creator.niche).trim() !== "")),
+    !!(creator.socials && typeof creator.socials === "object" && !Array.isArray(creator.socials) &&
+      Object.values(creator.socials).some((v) => v != null && String(v).trim() !== "")),
+  ];
+  let pct = Math.round((checks.filter(Boolean).length / 6) * 100);
+  if (creator.cover_image_url && String(creator.cover_image_url).trim() !== "") {
+    pct = Math.min(100, pct + 17);
+  }
+  return pct;
+}
+
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+});
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/creators/dashboard  — profile + completion pct            */
+/* ------------------------------------------------------------------ */
+router.get("/dashboard", authMiddleware, async (req, res) => {
+  const user = req.user;
+  if (!user?.id) return res.status(400).json({ message: "User info missing" });
+
+  const { data: creator, error } = await supabase
+    .from("creators")
+    .select("*")
+    .eq("user_id", user.id)
+    .single();
+
+  if (error || !creator) return res.status(404).json({ message: "Creator not found" });
+
+  const pct = calculateProfileCompletion(creator);
+
+  if (pct !== creator.profile_completion_pct) {
+    await supabase
+      .from("creators")
+      .update({ profile_completion_pct: pct, updated_at: new Date().toISOString() })
+      .eq("user_id", user.id);
+  }
+
+  res.json({ ...creator, profile_completion_pct: pct });
 });
 
 router.post("/:creatorId/message", authMiddleware, async (req, res) => {
