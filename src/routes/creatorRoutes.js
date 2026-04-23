@@ -11,12 +11,26 @@ function calculateProfileCompletion(creator) {
     !!(creator.username && String(creator.username).trim() !== ""),
     !!(creator.avatar_url && String(creator.avatar_url).trim() !== ""),
     !!(creator.bio && String(creator.bio).trim() !== ""),
-    !!(creator.niche && (Array.isArray(creator.niche) ? creator.niche.length > 0 : String(creator.niche).trim() !== "")),
-    !!(creator.socials && typeof creator.socials === "object" && !Array.isArray(creator.socials) &&
-      Object.values(creator.socials).some((v) => v != null && String(v).trim() !== "")),
+    !!(
+      creator.niche &&
+      (Array.isArray(creator.niche)
+        ? creator.niche.length > 0
+        : String(creator.niche).trim() !== "")
+    ),
+    !!(
+      creator.socials &&
+      typeof creator.socials === "object" &&
+      !Array.isArray(creator.socials) &&
+      Object.values(creator.socials).some(
+        (v) => v != null && String(v).trim() !== "",
+      )
+    ),
   ];
   let pct = Math.round((checks.filter(Boolean).length / 6) * 100);
-  if (creator.cover_image_url && String(creator.cover_image_url).trim() !== "") {
+  if (
+    creator.cover_image_url &&
+    String(creator.cover_image_url).trim() !== ""
+  ) {
     pct = Math.min(100, pct + 17);
   }
   return pct;
@@ -43,14 +57,18 @@ router.get("/dashboard", authMiddleware, async (req, res) => {
     .eq("user_id", user.id)
     .single();
 
-  if (error || !creator) return res.status(404).json({ message: "Creator not found" });
+  if (error || !creator)
+    return res.status(404).json({ message: "Creator not found" });
 
   const pct = calculateProfileCompletion(creator);
 
   if (pct !== creator.profile_completion_pct) {
     await supabase
       .from("creators")
-      .update({ profile_completion_pct: pct, updated_at: new Date().toISOString() })
+      .update({
+        profile_completion_pct: pct,
+        updated_at: new Date().toISOString(),
+      })
       .eq("user_id", user.id);
   }
 
@@ -195,17 +213,24 @@ router.post("/", authMiddleware, async (req, res) => {
   if (!user || !user.id || !user.email) {
     return res.status(400).json({ message: "User info missing" });
   }
+  const { role } = req.body;
+
   // Check if already exists
   const { data: existing } = await supabase
     .from("creators")
-    .select("*")
+    .select("user_id, onboarding_complete, role")
     .eq("user_id", user.id)
     .single();
+
   if (existing) {
+    // If not yet onboarded, allow role to be updated (user may have switched before finishing)
+    if (!existing.onboarding_complete && role && existing.role !== role) {
+      await supabase.from("creators").update({ role }).eq("user_id", user.id);
+    }
     return res.status(200).json({ message: "Creator already exists" });
   }
+
   // Insert new creator
-  const { role } = req.body;
   const { error } = await supabase.from("creators").insert([
     {
       user_id: user.id,
@@ -326,7 +351,9 @@ router.patch("/:creatorId/status", authMiddleware, async (req, res) => {
   const { account_status } = req.body;
 
   if (!["approved", "rejected", "pending"].includes(account_status)) {
-    return res.status(400).json({ message: "Invalid status. Use: approved, rejected, or pending" });
+    return res
+      .status(400)
+      .json({ message: "Invalid status. Use: approved, rejected, or pending" });
   }
 
   const { error } = await supabase
