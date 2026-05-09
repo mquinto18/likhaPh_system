@@ -92,6 +92,7 @@ router.post("/:creatorId/message", authMiddleware, async (req, res) => {
 
   if (creatorError || !creator) {
     return res.status(404).json({ message: "Creator not found" });
+    return res.status(404);
   }
 
   // Get creator's email from Supabase Auth
@@ -109,7 +110,7 @@ router.post("/:creatorId/message", authMiddleware, async (req, res) => {
     .eq("user_id", senderUserId)
     .single();
 
-  const senderName = sender?.name || "A LikhaHub user";
+  const senderName = sender?.name || "A Liik user";
   const senderUsername = sender?.username || "";
 
   // Get sender's email from Supabase Auth
@@ -122,7 +123,7 @@ router.post("/:creatorId/message", authMiddleware, async (req, res) => {
 
   // Send email
   const mailOptions = {
-    from: `"LikhaHub" <${process.env.EMAIL_USER}>`,
+    from: `"liik" <${process.env.EMAIL_USER}>`,
     to: creatorAuth.user.email,
     subject: `New Collaboration Request from ${senderName}`,
     html: `
@@ -134,9 +135,9 @@ router.post("/:creatorId/message", authMiddleware, async (req, res) => {
         </div>
         ${senderEmail ? `<p style="font-size: 14px; margin: 12px 0;"><strong>Email:</strong> <a href="mailto:${senderEmail}" style="color: #6d28d9;">${senderEmail}</a></p>` : ""}
         ${senderProfileLink ? `<p style="font-size: 14px; margin: 12px 0;"><strong>Profile:</strong> <a href="${senderProfileLink}" style="color: #6d28d9;">View ${senderName}'s Profile</a></p>` : ""}
-        <p style="color: #666; font-size: 14px;">Reply to this email or connect on LikhaHub.</p>
+        <p style="color: #666; font-size: 14px;">Reply to this email or connect on Liik.</p>
         <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 24px 0;" />
-        <p style="color: #999; font-size: 12px;">© 2026 LikhaHub</p>
+        <p style="color: #999; font-size: 12px;">© 2026 Liik</p>
       </div>
     `,
   };
@@ -246,6 +247,63 @@ router.post("/", authMiddleware, async (req, res) => {
   res.status(201).json({ message: "Creator created" });
 });
 
+// Public: get a brand profile by username + their campaigns + basic stats
+router.get("/public/brands/:username", async (req, res) => {
+  const { username } = req.params;
+
+  const { data: brand, error } = await supabase
+    .from("creators")
+    .select("user_id, name, username, bio, avatar_url, socials, account_status, onboarding_complete, role")
+    .eq("username", username)
+    .single();
+
+  if (error || !brand) {
+    console.error("[public brand] not found:", username, error?.message);
+    return res.status(404).json({ message: "Brand not found" });
+  }
+
+  // Published campaigns
+  const { data: campaigns } = await supabase
+    .from("campaigns")
+    .select("id, title, description, cover_image, platforms, content_types, compensation_type, budget_min, budget_max, creator_niches, follower_tiers, application_deadline, creators_needed, goal, deliverables, key_message, dos, donts, application_question")
+    .eq("brand_id", brand.user_id)
+    .eq("status", "published")
+    .order("created_at", { ascending: false });
+
+  // Stats: total campaigns run (published or closed)
+  const { count: campaignsRun } = await supabase
+    .from("campaigns")
+    .select("id", { count: "exact", head: true })
+    .eq("brand_id", brand.user_id)
+    .in("status", ["published", "closed"]);
+
+  // Stats: total approved applications across all brand campaigns
+  const { data: brandCampaignIds } = await supabase
+    .from("campaigns")
+    .select("id")
+    .eq("brand_id", brand.user_id);
+
+  let creatorsWorkedWith = 0;
+  if (brandCampaignIds && brandCampaignIds.length > 0) {
+    const ids = brandCampaignIds.map((c) => c.id);
+    const { count } = await supabase
+      .from("applications")
+      .select("id", { count: "exact", head: true })
+      .in("campaign_id", ids)
+      .eq("status", "approved");
+    creatorsWorkedWith = count || 0;
+  }
+
+  res.json({
+    brand,
+    campaigns: campaigns || [],
+    stats: {
+      campaigns_run: campaignsRun || 0,
+      creators_worked_with: creatorsWorkedWith,
+    },
+  });
+});
+
 // Public: get all onboarded and approved creators (no auth required)
 router.get("/public", async (req, res) => {
   const { data, error } = await supabase
@@ -348,7 +406,7 @@ router.get("/:creatorId/likes", async (req, res) => {
 // Admin: update a creator's account status (approve/reject)
 router.patch("/:creatorId/status", authMiddleware, async (req, res) => {
   const { creatorId } = req.params;
-  const { account_status } = req.body;
+  const account_status = (req.body.account_status || "").trim();
 
   if (!["approved", "rejected", "pending"].includes(account_status)) {
     return res
