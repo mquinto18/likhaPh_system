@@ -10,7 +10,14 @@ import invitationRoutes from "./routes/invitationRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 const app = express();
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "https://liik-ph.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:4173",
+  ],
+  credentials: true,
+}));
 app.use(express.json());
 
 app.use("/api/creators", creatorRoutes);
